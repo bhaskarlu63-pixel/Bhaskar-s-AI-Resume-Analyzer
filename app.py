@@ -1,7 +1,5 @@
 import streamlit as st
-import pdf2image
-import pytesseract
-from PIL import Image
+import pdfplumber
 import os
 import json
 import re
@@ -12,12 +10,16 @@ from reportlab.lib.pagesizes import letter
 
 # -------------------- CONFIG --------------------
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # -------------------- HELPERS --------------------
 def extract_text_from_pdf(pdf_file):
-    pages = pdf2image.convert_from_bytes(pdf_file.read())
-    return "\n".join(pytesseract.image_to_string(p) for p in pages)
+    text = ""
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    return text
 
 def extract_json(text):
     try:
@@ -58,15 +60,15 @@ Job Description:
 {jd_text}
 """
 
-    try:
-        raw = safe_groq_call([
-            {"role":"system","content":system_prompt},
-            {"role":"user","content":user_prompt}
-        ], temperature=0.05)
+    raw = safe_groq_call(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.05,
+    )
 
-        return extract_json(raw) or {}
-    except:
-        return {}
+    return extract_json(raw) or {}
 
 # -------------------- AI: SUMMARY --------------------
 def groq_summary(resume_text, jd_text):
@@ -79,7 +81,7 @@ Resume:
 Job Description:
 {jd_text}
 """
-    return safe_groq_call([{"role":"user","content":prompt}], temperature=0.3)
+    return safe_groq_call([{"role": "user", "content": prompt}], temperature=0.3)
 
 # -------------------- AI: ATS EXPLANATION --------------------
 def groq_ats_explanation(resume_text, jd_text, score):
@@ -92,7 +94,7 @@ Resume:
 Job Description:
 {jd_text}
 """
-    return safe_groq_call([{"role":"user","content":prompt}], temperature=0.2)
+    return safe_groq_call([{"role": "user", "content": prompt}], temperature=0.2)
 
 # -------------------- AI: CAREER RECOMMENDATIONS --------------------
 def groq_career_recommendation(resume_text, jd_text):
@@ -110,15 +112,15 @@ Job Description:
 {jd_text}
 """
 
-    try:
-        raw = safe_groq_call([
-            {"role":"system","content":system_prompt},
-            {"role":"user","content":user_prompt}
-        ], temperature=0.05)
+    raw = safe_groq_call(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.05,
+    )
 
-        return extract_json(raw) or {}
-    except:
-        return {}
+    return extract_json(raw) or {}
 
 # -------------------- PDF REPORT --------------------
 def generate_pdf_report(data):
@@ -127,18 +129,18 @@ def generate_pdf_report(data):
     story = []
 
     story.append(Paragraph("ATS Resume Analysis Report", styles["Heading1"]))
-    story.append(Spacer(1,10))
+    story.append(Spacer(1, 10))
     story.append(Paragraph(f"ATS Score: {data.get('ats_score',0)}%", styles["Normal"]))
-    story.append(Spacer(1,10))
+    story.append(Spacer(1, 10))
 
-    for section in ["skills_found","skills_missing","strengths","weaknesses","improvements"]:
-        story.append(Paragraph(section.replace("_"," ").title(), styles["Heading3"]))
-        for item in data.get(section,[]):
+    for section in ["skills_found", "skills_missing", "strengths", "weaknesses", "improvements"]:
+        story.append(Paragraph(section.replace("_", " ").title(), styles["Heading3"]))
+        for item in data.get(section, []):
             story.append(Paragraph(f"- {item}", styles["Normal"]))
-        story.append(Spacer(1,8))
+        story.append(Spacer(1, 8))
 
     doc.build(story)
-    with open("ATS_Report.pdf","rb") as f:
+    with open("ATS_Report.pdf", "rb") as f:
         return f.read()
 
 # -------------------- STREAMLIT UI --------------------
@@ -157,12 +159,12 @@ if analyze:
         resume_text = extract_text_from_pdf(uploaded_file)
 
         ats = groq_full_analysis(resume_text, jd_text)
-        score = max(0, min(100, int(ats.get("ats_score",0))))
+        score = max(0, min(100, int(ats.get("ats_score", 0))))
 
         rating = (
-            "🌟 Excellent Match" if score>=85 else
-            "✅ Strong Match" if score>=70 else
-            "⚠ Average Match" if score>=50 else
+            "🌟 Excellent Match" if score >= 85 else
+            "✅ Strong Match" if score >= 70 else
+            "⚠ Average Match" if score >= 50 else
             "❌ Weak Match"
         )
 
@@ -177,36 +179,39 @@ if analyze:
         st.info(groq_summary(resume_text, jd_text))
 
         with st.expander("✔ Skills / ❌ Missing / 💪 Strengths / ⚠ Weaknesses", expanded=True):
-            st.success("Skills Found: " + ", ".join(ats.get("skills_found",[])))
-            st.error("Missing Skills: " + ", ".join(ats.get("skills_missing",[])))
+            st.success("Skills Found: " + ", ".join(ats.get("skills_found", [])))
+            st.error("Missing Skills: " + ", ".join(ats.get("skills_missing", [])))
 
             st.subheader("Strengths")
-            for s in ats.get("strengths",[]): st.success(s)
+            for s in ats.get("strengths", []):
+                st.success(s)
 
             st.subheader("Weaknesses")
-            for w in ats.get("weaknesses",[]): st.warning(w)
+            for w in ats.get("weaknesses", []):
+                st.warning(w)
 
-        # ✍ RESUME REWRITE
         with st.expander("✍ AI Resume Rewrite (ATS-friendly)", expanded=False):
-            rewrite = ats.get("resume_rewrite","")
+            rewrite = ats.get("resume_rewrite", "")
             st.text_area("Rewritten Resume", rewrite, height=300)
             st.download_button("Download Rewritten Resume", rewrite, "rewritten_resume.txt")
 
-        # 🎯 CAREER RECOMMENDATIONS
         career = groq_career_recommendation(resume_text, jd_text)
 
         with st.expander("🎯 AI Career Fit Recommendations", expanded=True):
             st.subheader("Recommended Roles")
-            for r in career.get("recommended_roles",[]): st.success(r)
+            for r in career.get("recommended_roles", []):
+                st.success(r)
 
             st.subheader("Why you fit")
-            st.info(career.get("why_fit",""))
+            st.info(career.get("why_fit", ""))
 
             st.subheader("Skills to improve")
-            for s in career.get("skills_to_improve",[]): st.warning(s)
+            for s in career.get("skills_to_improve", []):
+                st.warning(s)
 
             st.subheader("Resume upgrade tips")
-            for t in career.get("resume_upgrade_tips",[]): st.info(t)
+            for t in career.get("resume_upgrade_tips", []):
+                st.info(t)
 
         pdf = generate_pdf_report(ats)
         st.download_button("📥 Download ATS PDF Report", pdf, "ATS_Report.pdf")
