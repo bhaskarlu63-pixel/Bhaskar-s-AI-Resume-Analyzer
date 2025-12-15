@@ -1,0 +1,62 @@
+from flask import Flask, render_template, request
+import pytesseract
+from PIL import Image
+import pdf2image
+import os
+
+# Tesseract path
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+app = Flask(__name__)
+
+def extract_text_from_resume(file_path):
+    text = ""
+    if file_path.lower().endswith(".pdf"):
+        pages = pdf2image.convert_from_path(file_path)
+        for page in pages:
+            text += pytesseract.image_to_string(page)
+    else:
+        img = Image.open(file_path)
+        text = pytesseract.image_to_string(img)
+    return text
+
+
+def compare_resume_with_jd(resume_text, jd_text):
+    resume_words = set(resume_text.lower().split())
+    jd_words = set(jd_text.lower().split())
+    
+    missing_skills = jd_words - resume_words
+    matched_skills = jd_words & resume_words
+
+    return matched_skills, missing_skills
+
+
+@app.route("/", methods=["GET", "POST"])
+def home():
+    result = None
+    if request.method == "POST":
+        jd_text = request.form["jd"]
+        
+        if "resume" not in request.files:
+            return "Please upload a resume file."
+
+        resume_file = request.files["resume"]
+        file_path = "uploaded_resume." + resume_file.filename.split(".")[-1]
+        resume_file.save(file_path)
+
+        resume_text = extract_text_from_resume(file_path)
+
+        matched, missing = compare_resume_with_jd(resume_text, jd_text)
+
+        result = {
+            "matched": list(matched),
+            "missing": list(missing),
+        }
+
+        os.remove(file_path)
+
+    return render_template("index.html", result=result)
+
+
+if __name__ == "__main__":
+    app.run(debug=False)   # IMPORTANT: debug=False fixes the signal error
